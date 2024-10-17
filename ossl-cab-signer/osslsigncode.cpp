@@ -153,10 +153,8 @@ out:
     return ret;
 }
 
-
 int enter(char const* input_cab_file_path, char const* output_file_path, char const* pkcs12_file_path, char const* password, int password_length)
 {
-
     GLOBAL_OPTIONS options;
     PKCS7 *p7 = NULL;
     BIO *outdata = NULL;
@@ -165,22 +163,22 @@ int enter(char const* input_cab_file_path, char const* output_file_path, char co
 
     /* reset options */
     memset(&options, 0, sizeof(GLOBAL_OPTIONS));
+
     options.infile = input_cab_file_path;
     options.outfile = output_file_path;
+
+
     /* create some MS Authenticode OIDS we need later on */
+
     if (!OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL)
         || !OBJ_create(SPC_SP_OPUS_INFO_OBJID, NULL, NULL))
         return 1;
 
 
-    
-
     /* read key and certificates */
     if (!read_crypto_params(&options, pkcs12_file_path, password, password_length))
         return 1;
 
-
-    /* Create message digest BIO */
 
     CabFileController cab{ options };
    
@@ -193,46 +191,22 @@ int enter(char const* input_cab_file_path, char const* output_file_path, char co
     if (!p7) {
         return 1;
     }
-    
 
-   
-    
     ret = cab.append_pkcs7(p7);
     if (ret) {
         PKCS7_free(p7);
         return 1;
     }
-    
-    
+        
     cab.update_data_size(p7);
     
     PKCS7_free(p7);
 
-    
-    /*
-    if (options.outfile) {
-        // unlink outfile
-        ret = remove_file(options.outfile);
-        std::cout << ret << '\n';
-    }
-    */
-
-   printf(ret ? "Failed\n" : "Succeeded\n");
+    printf(ret ? "Failed\n" : "Succeeded\n");
 
     return ret;
 }
-/*
-char* read_binary_into_buffer(char const* file_path, size_t *_size)
-{
-    std::ifstream pkcs12_file_stream(file_path, std::ios::binary | std::ios::ate);
-    std::streamsize size = pkcs12_file_stream.tellg();
-    pkcs12_file_stream.seekg(0, std::ios::beg);
-    char* p = (char*)OPENSSL_malloc(size);
-    pkcs12_file_stream.read(p, size);
-    *_size = size;
-    return p;
-}
-*/
+
 
 int main(int argc, char** argv)
 {
