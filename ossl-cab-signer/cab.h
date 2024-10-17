@@ -1,0 +1,73 @@
+#pragma once
+const unsigned char CAB_DISTINCT_BYTES[4] = { 0x4d, 0x53, 0x43, 0x46 };
+const int OFFSET_CAB_DISTINCT_BYTES = 0;
+const int CAB_DISTINCT_BYTES_SIZE = 4;
+
+const int OFFSET_RESERVED1 = 4;
+const int RESERVED1_SIZE = 4;
+
+const int OFFSET_CBCABINET = 8;
+const int CBCABINET_SIZE = 4;
+
+const int OFFSET_RESERVED2 = 12;
+const int RESERVED2_SIZE = 4;
+
+const int OFFSET_COFFFILES = 16;
+const int COFFFILES_SIZE = 4;
+
+const int OFFSET_RESERVED3 = 20;
+const int RESERVED3_SIZE = 4;
+
+const int OFFSET_VERSION_MINOR = 24;
+const int VERSION_MINOR_SIZE = 1;
+
+const int OFFSET_VERSION_MAJOR = 25;
+const int VERSION_MAJOR_SIZE = 1;
+
+const int OFFSET_CFOLDERS = 26;
+const int CFOLDERS_SIZE = 2;
+
+const int OFFSET_CFILES = 28;
+const int CFILES_SIZE = 2;
+
+const int OFFSET_FLAGS = 30;
+const int FLAGS_SIZE = 2;
+
+const int OFFSET_SETID = 32;
+const int SETID_SIZE = 2;
+
+const int OFFSET_ICABINET = 34;
+const int ICABINET_SIZE = 2;
+
+const unsigned char CBCFHEADER_VALUE_FOR_SIGNING[2] = { 0x14, 0x00 }; // little endian, decimal 20
+const int OFFSET_CBCFHEADER = 36;
+const int CBCFHEADER_SIZE = 2;
+
+
+const int OFFSET_CBCFFOLDER = 38;
+const int CBCFFOLDER_SIZE = 1;
+
+const int OFFSET_CBCFDATA = 39;
+const int CBCFDATA_SIZE = 1;
+
+const int OFFSET_ABRESERVE = 40;
+const int ABRESERVE_SIZE = 20;
+
+const unsigned char ABRESERVE_DISTINCT_BYTES_FOR_SIGNING[4] = { 0x00, 0x00, 0x10, 0x00 };
+const int OFFSET_ABRESERCE_DISTINCT_BYTES = OFFSET_ABRESERVE;
+const int ABRESERVE_DISTINCT_BYTES_SIZE = 4;
+
+const int OFFSET_ABRESERVE_SIGNATURE_OFFSET = 44;
+const int ABRESERVE_SIGNATURE_OFFSET_SIZE = 4;
+
+const int OFFSET_ABRESERVE_SIGNATURE_SIZE = 48;
+const int ABRESERVE_SIGNATURE_SIZE_SIZE = 4;
+
+const int OFFSET_ABRESERVE_REDUNDANT = 52;
+const int ABRESERVE_REDUNDANT_SIZE = 8;
+
+const int OFFSET_CFFOLDER_NO_RESERVE = OFFSET_CBCFHEADER;
+const int CFFOLDER_SIZE_FOR_ONE = 8;
+
+const int COFFCABSTART_SIZE = 4;
+
