@@ -115,13 +115,13 @@ static int read_crypto_params(GLOBAL_OPTIONS* options, char const* pkcs12_file_p
     int ret = 0;
     BIO* btmp;
     PKCS12* p12;
-
-    bool test_buffer = false;
+    char* pkcs12_buffer = NULL;
+    bool test_buffer = true;
 
     if (test_buffer)
     {
         size_t pkcs12_size;
-        char* pkcs12_buffer = read_binary_into_buffer(pkcs12_file_path, &pkcs12_size);
+        pkcs12_buffer = read_binary_into_buffer(pkcs12_file_path, &pkcs12_size);
         btmp = BIO_new_mem_buf(pkcs12_buffer, pkcs12_size);
     }
     else
@@ -148,7 +148,8 @@ static int read_crypto_params(GLOBAL_OPTIONS* options, char const* pkcs12_file_p
     ret = 1; /* OK */
 out:
     BIO_free(btmp);
-
+    if (pkcs12_buffer != NULL)
+        OPENSSL_free(pkcs12_buffer);
     return ret;
 }
 
@@ -208,11 +209,13 @@ int enter(char const* input_cab_file_path, char const* output_file_path, char co
     PKCS7_free(p7);
 
     
-
+    /*
     if (options.outfile) {
-        /* unlink outfile */
-        remove_file(options.outfile);
+        // unlink outfile
+        ret = remove_file(options.outfile);
+        std::cout << ret << '\n';
     }
+    */
 
    printf(ret ? "Failed\n" : "Succeeded\n");
 

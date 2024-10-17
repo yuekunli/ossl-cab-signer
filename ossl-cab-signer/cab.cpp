@@ -14,7 +14,7 @@ typedef unsigned char u_char;
  */
 CabFileController::CabFileController(GLOBAL_OPTIONS &options)
 {
-    
+    /*
     file_size = get_file_size(options.infile);
     if (file_size == 0)
         return;
@@ -23,13 +23,13 @@ CabFileController::CabFileController(GLOBAL_OPTIONS &options)
     if (!indata) {
         return;
     }
-    
+    */
 
-    //indata = read_binary_into_buffer(options.infile, &file_size);
+    indata = read_binary_into_buffer(options.infile, &file_size);
 
     if (memcmp(indata, CAB_DISTINCT_BYTES, 4)) {
-        unmap_file(indata);
-        //OPENSSL_free(indata);
+        //unmap_file(indata);
+        OPENSSL_free(indata);
         return; /* FAILED */
     }
     md = EVP_sha256();
@@ -55,8 +55,8 @@ CabFileController::CabFileController(GLOBAL_OPTIONS &options)
 CabFileController::~CabFileController()
 {
     BIO_free_all(hash);
-    unmap_file(indata);
-    //OPENSSL_free(indata);
+    //unmap_file(indata);
+    OPENSSL_free(indata);
 }
 
 /*
