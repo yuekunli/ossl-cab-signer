@@ -1,57 +1,21 @@
-/*
- * Copyright (C) 2021-2023 Michał Trojnara <Michal.Trojnara@stunnel.org>
- * Author: Małgorzata Olszówka <Malgorzata.Olszowka@stunnel.org>
- */
-
-
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winsock2.h>
 
-//#include <ctype.h>
-//#include <errno.h>
-//#include <fcntl.h>
-//#include <stdbool.h>
-//#include <stdint.h>
-//#include <stdio.h>
-//#include <stdlib.h>
-//#include <string.h>
-//#include <time.h>
-
-
-//#include <sys/types.h>
 #include <sys/stat.h>
 
 #include <openssl/asn1t.h>
 #include <openssl/bio.h>
-//#include <openssl/bn.h>
-
-//#include <openssl/conf.h>
-//#include <openssl/crypto.h>
-
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
-
 #include <openssl/pkcs7.h>
 #include <openssl/pkcs12.h>
-
-//#include <openssl/provider.h>
-
-//#include <openssl/rand.h>
 #include <openssl/safestack.h>
-//#include <openssl/ssl.h>
-//#include <openssl/ts.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h> /* X509_PURPOSE */
 
 
-
-#ifdef WIN32
-#define remove_file(filename) _unlink(filename)
-#else
-#define remove_file(filename) unlink(filename)
-#endif /* WIN32 */
 
 #define GET_UINT8_LE(p) ((const u_char *)(p))[0]
 
@@ -146,9 +110,6 @@
 #define PKCS9_COUNTER_SIGNATURE      "1.2.840.113549.1.9.6"
 #define PKCS9_SEQUENCE_NUMBER        "1.2.840.113549.1.9.25.4"
 
-/* WIN_CERTIFICATE structure declared in Wintrust.h */
-#define WIN_CERT_REVISION_2_0           0x0200
-#define WIN_CERT_TYPE_PKCS_SIGNED_DATA  0x0002
 
 /*
  * FLAG_PREV_CABINET is set if the cabinet file is not the first in a set
@@ -243,36 +204,38 @@ typedef struct {
 DECLARE_ASN1_FUNCTIONS(SpcIndirectDataContent)
 
 
-typedef struct {
-    char const* infile;
-    char const* outfile;
+struct SigningCryptoParams {
+public:
     EVP_PKEY* pkey;
     X509* cert;
     STACK_OF(X509)* certs;
-} GLOBAL_OPTIONS;
+    SigningCryptoParams();
+};
 
 
 
 
-class CabFileController
+class CabFileSigner
 {
 private:
     typedef unsigned char u_char;
 
-    size_t file_size;
+    size_t original_cab_file_size;
     BIO* hash;
     BIO* outdata;
-    EVP_MD const* md;
+    EVP_MD const * md;
     char* indata;
+    PKCS7* p7;
     
 public:
-    CabFileController(GLOBAL_OPTIONS& options);
-    ~CabFileController();
+    CabFileSigner(char const* infile, char const* outfile);
+    ~CabFileSigner();
+    int sign(SigningCryptoParams& params);
     int get_hash_size();
     EVP_MD const* get_md() const;
     int process_header();
-    PKCS7* pkcs7_signature_new(GLOBAL_OPTIONS& options);
-    int append_pkcs7(PKCS7* p7);
-    void update_data_size(PKCS7* p7);
+    int pkcs7_signature_new(SigningCryptoParams& options);
+    int append_pkcs7();
+    void update_data_size();
     ASN1_OBJECT* spc_indirect_data_attributetypeandoptionalvalue_get(u_char** p, int* len);
 };

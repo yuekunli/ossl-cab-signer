@@ -8,7 +8,7 @@
  * [in] infile
  * [returns] file size
  */
-uint32_t get_file_size(const char *infile)
+uint32_t get_original_cab_file_size(const char *infile)
 {
     int ret;
 #ifdef _WIN32
@@ -84,6 +84,52 @@ char* read_binary_into_buffer(char const* file_path, size_t* _size)
 }
 
 
+/*
+ * [in, out] options: structure holds the input data
+ * [returns] 0 on error or 1 on success
+ */
+int read_pkcs12(SigningCryptoParams& options, char const* pkcs12_file_path, char const* password, int password_length)
+{
+    int ret = 0;
+    BIO* btmp;
+    PKCS12* p12;
+    char* pkcs12_buffer = NULL;
+    bool test_buffer = true;
+
+    if (test_buffer)
+    {
+        size_t pkcs12_size;
+        pkcs12_buffer = read_binary_into_buffer(pkcs12_file_path, &pkcs12_size);
+        btmp = BIO_new_mem_buf(pkcs12_buffer, pkcs12_size);
+    }
+    else
+    {
+        btmp = BIO_new_file(pkcs12_file_path, "rb");
+    }
+
+    if (!btmp) {
+        fprintf(stderr, "Failed to read PKCS#12\n");
+        return 0; /* FAILED */
+    }
+    p12 = d2i_PKCS12_bio(btmp, NULL);
+    if (!p12) {
+        fprintf(stderr, "Failed to extract PKCS#12 data\n");
+        goto out; /* FAILED */
+    }
+    if (!PKCS12_parse(p12, password_length > 0 ? password : "", &options.pkey, &options.cert, &options.certs)) {
+        fprintf(stderr, "Failed to parse PKCS#12\n");
+        PKCS12_free(p12);
+        goto out; /* FAILED */
+    }
+    PKCS12_free(p12);
+
+    ret = 1; /* OK */
+out:
+    BIO_free(btmp);
+    if (pkcs12_buffer != NULL)
+        OPENSSL_free(pkcs12_buffer);
+    return ret;
+}
 
 /*
  * PE and CAB format specific
@@ -219,7 +265,7 @@ static int pkcs7_signer_info_add_signed_attribute_purpose(PKCS7_SIGNER_INFO* si)
  * [in] ctx: structure holds input and output data
  * [returns] pointer to PKCS#7 structure
  */
-PKCS7 *pkcs7_create(GLOBAL_OPTIONS&options, EVP_MD const* md)
+PKCS7 *pkcs7_create(SigningCryptoParams&options, EVP_MD const* md)
 {
     int i, signer = -1;
     PKCS7 *p7;
@@ -291,7 +337,7 @@ PKCS7 *pkcs7_create(GLOBAL_OPTIONS&options, EVP_MD const* md)
  * [in] ctx: FILE_FORMAT_CTX structure
  * [returns] 0 on error or 1 on success
  */
-static int spc_indirect_data_content_create_with_hash_placeholder(u_char** blob, int* len, CabFileController& cab)
+static int spc_indirect_data_content_create_with_hash_placeholder(u_char** blob, int* len, CabFileSigner& cab)
 {
     u_char* p = NULL;
     int mdtype, hashlen, l = 0;
@@ -338,7 +384,7 @@ static int spc_indirect_data_content_create_with_hash_placeholder(u_char** blob,
  * [in] ctx: structure holds input and output data
  * [returns] content
  */
-ASN1_OCTET_STRING *spc_indirect_data_content_create(BIO *hash, CabFileController& cab)
+ASN1_OCTET_STRING *spc_indirect_data_content_create(BIO *hash, CabFileSigner& cab)
 {
     ASN1_OCTET_STRING *content;
     u_char mdbuf[5 * EVP_MAX_MD_SIZE + 24];
@@ -466,7 +512,7 @@ static int X509_compare(const X509* const* a, const X509* const* b);
  * [in] signer: signer's certificate number in the certificate chain
  * [returns] sorted certificate chain
  */
-static STACK_OF(X509) *X509_chain_get_sorted(GLOBAL_OPTIONS&options, int signer)
+static STACK_OF(X509) *X509_chain_get_sorted(SigningCryptoParams&options, int signer)
 {
     int i;
     STACK_OF(X509) *chain = sk_X509_new(X509_compare);

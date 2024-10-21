@@ -86,13 +86,11 @@ ASN1_SEQUENCE(SpcIndirectDataContent) = {
 IMPLEMENT_ASN1_FUNCTIONS(SpcIndirectDataContent)
 
 
-char* read_binary_into_buffer(char const* file_path, size_t* _size);
-
 /*
  * [in, out] options: structure holds the input data
  * [returns] none
  */
-static void free_options(GLOBAL_OPTIONS *options)
+static void free_options(SigningCryptoParams *options)
 {
     /* If key is NULL nothing is done */
     EVP_PKEY_free(options->pkey);
@@ -106,67 +104,26 @@ static void free_options(GLOBAL_OPTIONS *options)
 }
 
 
-/*
- * [in, out] options: structure holds the input data
- * [returns] 0 on error or 1 on success
- */
-static int read_crypto_params(GLOBAL_OPTIONS* options, char const* pkcs12_file_path, char const* password, int password_length)
-{
-    int ret = 0;
-    BIO* btmp;
-    PKCS12* p12;
-    char* pkcs12_buffer = NULL;
-    bool test_buffer = true;
+SigningCryptoParams::SigningCryptoParams()
+    : pkey(NULL),
+    cert(NULL),
+    certs(NULL)
+{}
 
-    if (test_buffer)
-    {
-        size_t pkcs12_size;
-        pkcs12_buffer = read_binary_into_buffer(pkcs12_file_path, &pkcs12_size);
-        btmp = BIO_new_mem_buf(pkcs12_buffer, pkcs12_size);
-    }
-    else
-    {
-        btmp = BIO_new_file(pkcs12_file_path, "rb");
-    }
-    
-    if (!btmp) {
-        fprintf(stderr, "Failed to read PKCS#12\n");
-        return 0; /* FAILED */
-    }
-    p12 = d2i_PKCS12_bio(btmp, NULL);
-    if (!p12) {
-        fprintf(stderr, "Failed to extract PKCS#12 data\n");
-        goto out; /* FAILED */
-    }
-    if (!PKCS12_parse(p12, password_length > 0 ? password : "", &options->pkey, &options->cert, &options->certs)) {
-        fprintf(stderr, "Failed to parse PKCS#12\n");
-        PKCS12_free(p12);
-        goto out; /* FAILED */
-    }
-    PKCS12_free(p12);
-    
-    ret = 1; /* OK */
-out:
-    BIO_free(btmp);
-    if (pkcs12_buffer != NULL)
-        OPENSSL_free(pkcs12_buffer);
-    return ret;
-}
 
-int enter(char const* input_cab_file_path, char const* output_file_path, char const* pkcs12_file_path, char const* password, int password_length)
+
+int enter(
+    char const* input_cab_file_path, 
+    char const* output_file_path, 
+    char const* pkcs12_file_path, 
+    char const* password, 
+    int password_length)
 {
-    GLOBAL_OPTIONS options;
+    SigningCryptoParams cryptoParams;
     PKCS7 *p7 = NULL;
-    BIO *outdata = NULL;
-    BIO *hash = NULL;
     int ret = -1;
 
-    /* reset options */
-    memset(&options, 0, sizeof(GLOBAL_OPTIONS));
-
-    options.infile = input_cab_file_path;
-    options.outfile = output_file_path;
-
+    OSSL_LIB_CTX_load_config(NULL, "C:\\ws\\openssl-3.2.1_output\\static_64_debug\\openssl_default.cnf");
 
     /* create some MS Authenticode OIDS we need later on */
 
@@ -176,35 +133,19 @@ int enter(char const* input_cab_file_path, char const* output_file_path, char co
 
 
     /* read key and certificates */
-    if (!read_crypto_params(&options, pkcs12_file_path, password, password_length))
+    if (!read_pkcs12(cryptoParams, pkcs12_file_path, password, password_length))
         return 1;
 
 
-    CabFileController cab{ options };
+    CabFileSigner cab{ input_cab_file_path, output_file_path };
    
-    if (!cab.process_header()) {
-        return 1;
-    }
+    ret = cab.sign(cryptoParams);
     
-    
-    p7 = cab.pkcs7_signature_new(options);
-    if (!p7) {
-        return 1;
-    }
+    //PKCS7_free(p7);
 
-    ret = cab.append_pkcs7(p7);
-    if (ret) {
-        PKCS7_free(p7);
-        return 1;
-    }
-        
-    cab.update_data_size(p7);
-    
-    PKCS7_free(p7);
+    printf(ret ? "Succeeded\n" : "Failed\n");
 
-    printf(ret ? "Failed\n" : "Succeeded\n");
-
-    return ret;
+    return ret==1;
 }
 
 
@@ -212,5 +153,5 @@ int main(int argc, char** argv)
 {
     int ret = enter(argv[1], argv[2], argv[3], NULL, 0);
 
-    return ret;
+    return ret == 1? 0 : ret;
 }

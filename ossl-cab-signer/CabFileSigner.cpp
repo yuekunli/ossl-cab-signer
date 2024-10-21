@@ -1,7 +1,7 @@
 
 #include "osslsigncode.h"
 #include "helpers.h"
-#include "cab.h"
+#include "CabFileSigner.h"
 
 typedef unsigned char u_char;
 
@@ -12,20 +12,15 @@ typedef unsigned char u_char;
  * [in] outdata: outdata file BIO
  * [returns] pointer to CAB file format context
  */
-CabFileController::CabFileController(GLOBAL_OPTIONS &options)
+CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
+    :original_cab_file_size(0),
+    hash(NULL),
+    outdata(NULL),
+    md(NULL),
+    indata(NULL),
+    p7(NULL)
 {
-    /*
-    file_size = get_file_size(options.infile);
-    if (file_size == 0)
-        return;
-    
-    indata = map_file(options.infile, file_size);
-    if (!indata) {
-        return;
-    }
-    */
-
-    indata = read_binary_into_buffer(options.infile, &file_size);
+    indata = read_binary_into_buffer(infile, &original_cab_file_size);
 
     if (memcmp(indata, CAB_DISTINCT_BYTES, 4)) {
         //unmap_file(indata);
@@ -39,9 +34,9 @@ CabFileController::CabFileController(GLOBAL_OPTIONS &options)
         return;
     }
     /* Create outdata file */
-    outdata = BIO_new_file(options.outfile, "w+bx");
+    outdata = BIO_new_file(outfile, "w+bx");
     if (!outdata && errno != EEXIST)
-        outdata = BIO_new_file(options.outfile, "w+b");
+        outdata = BIO_new_file(outfile, "w+b");
     if (!outdata) {
         BIO_free_all(hash);
     }
@@ -52,23 +47,25 @@ CabFileController::CabFileController(GLOBAL_OPTIONS &options)
     return;
 }
 
-CabFileController::~CabFileController()
+CabFileSigner::~CabFileSigner()
 {
     BIO_free_all(hash);
     //unmap_file(indata);
     OPENSSL_free(indata);
+    //EVP_MD_free(md);
+    PKCS7_free(p7);
 }
 
 /*
  * [in] ctx: structure holds input and output data
  * [returns] the size of the message digest when passed an EVP_MD structure (the size of the hash)
  */
-int CabFileController::get_hash_size()
+int CabFileSigner::get_hash_size()
 {
     return EVP_MD_size(md);
 }
 
-EVP_MD const* CabFileController::get_md() const
+EVP_MD const* CabFileSigner::get_md() const
 {
     return md;
 }
@@ -80,9 +77,9 @@ EVP_MD const* CabFileController::get_md() const
  * [in] ctx: structure holds input and output data (unused)
  * [returns] pointer to ASN1_OBJECT structure corresponding to SPC_CAB_DATA_OBJID
  */
-ASN1_OBJECT* CabFileController::spc_indirect_data_attributetypeandoptionalvalue_get(u_char** p, int* plen)
+ASN1_OBJECT* CabFileSigner::spc_indirect_data_attributetypeandoptionalvalue_get(u_char** p, int* plen)
 {
-    ASN1_OBJECT* dtype;
+    ASN1_OBJECT* dtype = NULL;
     SpcLink* link = spc_link_obsolete_get();
 
     *plen = i2d_SpcLink(link, NULL);
@@ -100,34 +97,34 @@ ASN1_OBJECT* CabFileController::spc_indirect_data_attributetypeandoptionalvalue_
  * [out] hash: message digest BIO
  * [returns] pointer to PKCS#7 structure
  */
-PKCS7 * CabFileController::pkcs7_signature_new(GLOBAL_OPTIONS& options)
+int CabFileSigner::pkcs7_signature_new(SigningCryptoParams& options)
 {
     ASN1_OCTET_STRING *content;
-    PKCS7 *p7 = pkcs7_create(options, md);
+    p7 = pkcs7_create(options, md);
 
     if (!p7) {
         fprintf(stderr, "Creating a new signature failed\n");
-        return NULL; /* FAILED */
+        return 0; /* FAILED */
     }
 
     if (!pkcs7_signer_info_add_signed_attribute_content_type(p7)) {
         fprintf(stderr, "Adding SPC_INDIRECT_DATA_OBJID failed\n");
         PKCS7_free(p7);
-        return NULL; /* FAILED */
+        return 0; /* FAILED */
     }
     content = spc_indirect_data_content_create(hash, *this);
     if (!content) {
         fprintf(stderr, "Failed to get spcIndirectDataContent\n");
-        return NULL; /* FAILED */
+        return 0; /* FAILED */
     }
     if (!sign_spc_indirect_data_content(p7, content)) {
         fprintf(stderr, "Failed to set signed content\n");
         PKCS7_free(p7);
         ASN1_OCTET_STRING_free(content);
-        return NULL; /* FAILED */
+        return 0; /* FAILED */
     }
     ASN1_OCTET_STRING_free(content);
-    return p7;
+    return 1;
 }
 
 /*
@@ -137,7 +134,7 @@ PKCS7 * CabFileController::pkcs7_signature_new(GLOBAL_OPTIONS& options)
  * [out] outdata: outdata file BIO
  * [returns] 0 on error or 1 on success
  */
-int CabFileController::process_header()
+int CabFileSigner::process_header()
 {
     size_t idx, written, len;
     uint32_t tmp;
@@ -207,7 +204,7 @@ int CabFileController::process_header()
     BIO_write(hash, cfHeader_optional_fields +20, 4);
 
     idx = OFFSET_CFFOLDER_NO_RESERVE;
-    if (idx >= file_size) {
+    if (idx >= original_cab_file_size) {
         fprintf(stderr, "Corrupt CAB file - too short\n");
         //OPENSSL_free(buf);
         return 0; /* FAILED */
@@ -217,7 +214,7 @@ int CabFileController::process_header()
      * one of the folders or partial folders stored in this cabinet file
      */
     nfolders = GET_UINT16_LE(indata + OFFSET_CFOLDERS);
-    if (nfolders * 8 >= file_size - idx) {
+    if (nfolders * CFFOLDER_SIZE_FOR_ONE >= original_cab_file_size - idx) {
         fprintf(stderr, "Corrupt cFolders value: 0x%08X\n", nfolders);
         //OPENSSL_free(buf);
         return 0; /* FAILED */
@@ -233,7 +230,7 @@ int CabFileController::process_header()
     }
     //OPENSSL_free(buf);
     /* Write what's left - the compressed data bytes */
-    len = file_size - idx;
+    len = original_cab_file_size - idx;
     while (len > 0) {
         if (!BIO_write_ex(hash, indata + idx, len, &written))
             return 0; /* FAILED */
@@ -250,17 +247,16 @@ int CabFileController::process_header()
  * [in] p7: PKCS#7 signature
  * [returns] 1 on error or 0 on success
  */
-int CabFileController::append_pkcs7(PKCS7* p7)
+int CabFileSigner::append_pkcs7()
 {
     u_char* p = NULL;
     int len;       /* signature length */
     int padlen;    /* signature padding length */
 
-
     if (((len = i2d_PKCS7(p7, NULL)) <= 0)
         || (p = (u_char*)OPENSSL_malloc((size_t)len)) == NULL) {
         fprintf(stderr, "i2d_PKCS memory allocation failed: %d\n", len);
-        return 1; /* FAILED */
+        return 0; /* FAILED */
     }
     i2d_PKCS7(p7, &p);
     p -= len;
@@ -272,7 +268,7 @@ int CabFileController::append_pkcs7(PKCS7* p7)
         BIO_write(outdata, p, padlen);
     }
     OPENSSL_free(p);
-    return 0; /* OK */
+    return 1; /* OK */
 }
 
 
@@ -285,7 +281,7 @@ int CabFileController::append_pkcs7(PKCS7* p7)
  * [in] p7: PKCS#7 signature
  * [returns] none
  */
-void CabFileController::update_data_size(PKCS7* p7)
+void CabFileSigner::update_data_size()
 {
     int len, padlen;
     u_char buf[] = {
@@ -299,3 +295,24 @@ void CabFileController::update_data_size(PKCS7* p7)
     BIO_write(outdata, buf, ABRESERVE_SIGNATURE_SIZE_SIZE);
 }
 
+int CabFileSigner::sign(SigningCryptoParams& params)
+{
+    int ret = 0;
+    if (!process_header()) {
+        return 0;
+    }
+    ret = pkcs7_signature_new(params);
+    if (!ret) {
+        return 0;
+    }
+
+    ret = append_pkcs7();
+    if (!ret) {
+        //PKCS7_free(p7);
+        return 0;
+    }
+
+    update_data_size();
+
+    return 1;
+}

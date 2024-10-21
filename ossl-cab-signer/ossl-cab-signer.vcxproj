@@ -19,12 +19,12 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="cab.cpp" />
+    <ClCompile Include="CabFileSigner.cpp" />
     <ClCompile Include="helpers.cpp" />
     <ClCompile Include="osslsigncode.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="cab.h" />
+    <ClInclude Include="CabFileSigner.h" />
     <ClInclude Include="helpers.h" />
     <ClInclude Include="osslsigncode.h" />
   </ItemGroup>

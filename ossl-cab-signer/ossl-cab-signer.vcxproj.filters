@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="cab.cpp">
+    <ClCompile Include="CabFileSigner.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="helpers.cpp">
@@ -32,7 +32,7 @@
     <ClInclude Include="osslsigncode.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cab.h">
+    <ClInclude Include="CabFileSigner.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
