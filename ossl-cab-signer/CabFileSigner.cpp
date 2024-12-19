@@ -1,6 +1,6 @@
-
-#include "osslsigncode.h"
 #include "helpers.h"
+#include "osslsigncode.h"
+
 #include "CabFileSigner.h"
 
 typedef unsigned char u_char;
@@ -169,7 +169,20 @@ int CabFileSigner::process_header()
     /* u4 reserved1 00000000: 4-7 */
     BIO_write(outdata, indata + OFFSET_RESERVED1, RESERVED1_SIZE);
     /* u4 cbCabinet - size of this cabinet file in bytes: 8-11 */
-    tmp = GET_UINT32_LE(indata + OFFSET_CBCABINET) + extra_size;
+
+
+    char* p1 = indata + OFFSET_CBCABINET;
+    printf("%xd  %xd  %xd  %xd", p1[0], p1[1], p1[2], p1[3]);
+
+
+    tmp = GET_UINT32_LE(indata + OFFSET_CBCABINET);
+
+    unsigned char* p = (unsigned char*)&tmp;
+    printf("%xd  %xd  %xd  %xd", p[0], p[1], p[2], p[3]);
+    
+    
+    tmp += extra_size;
+    
     PUT_UINT32_LE(tmp, cbCabinet_buf);
     BIO_write(hash, cbCabinet_buf, CBCABINET_SIZE);
     /* u4 reserved2 00000000: 12-15 */

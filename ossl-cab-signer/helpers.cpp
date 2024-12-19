@@ -1,9 +1,24 @@
 #include "osslsigncode.h"
 #include "helpers.h"
-#include<string>
-#include<iostream>
+//#include<string>
+//#include<iostream>
 #include<fstream>
+#include<algorithm>
 
+//#include <sys/stat.h>
+
+#include <openssl/asn1t.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/objects.h>
+#include <openssl/pkcs7.h>
+#include <openssl/pkcs12.h>
+#include <openssl/safestack.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h> /* X509_PURPOSE */
+
+#if 0
 /*
  * [in] infile
  * [returns] file size
@@ -71,6 +86,8 @@ void unmap_file(char *indata)
     UnmapViewOfFile(indata);
 
 }
+
+#endif
 
 char* read_binary_into_buffer(char const* file_path, size_t* _size)
 {
@@ -564,7 +581,7 @@ static int X509_compare(const X509 *const *a, const X509 *const *b)
     b_data = (u_char*)OPENSSL_malloc(b_len);
     i2d_X509(*b, &b_data);
 
-    ret = memcmp(a_data, b_data, min(a_len, b_len));
+    ret = memcmp(a_data, b_data, std::min(a_len, b_len));
     OPENSSL_free(a_data);
     OPENSSL_free(b_data);
 

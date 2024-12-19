@@ -1,19 +1,17 @@
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
+//#define WIN32_LEAN_AND_MEAN
+//#include <windows.h>
 
-#include <sys/stat.h>
 
 #include <openssl/asn1t.h>
 #include <openssl/bio.h>
-#include <openssl/err.h>
+//#include <openssl/err.h>
 #include <openssl/evp.h>
-#include <openssl/objects.h>
+//#include <openssl/objects.h>
 #include <openssl/pkcs7.h>
-#include <openssl/pkcs12.h>
-#include <openssl/safestack.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h> /* X509_PURPOSE */
+//#include <openssl/pkcs12.h>
+//#include <openssl/safestack.h>
+//#include <openssl/x509.h>
+//#include <openssl/x509v3.h> /* X509_PURPOSE */
 
 
 
@@ -156,7 +154,7 @@ typedef struct {
 
 DECLARE_ASN1_FUNCTIONS(SpcSerializedObject)
 
-typedef struct {
+typedef struct SpcLink_st {   // the reason for giving this struct a name "SpcLink_st" is for helpers.h to declare it.
     int type;
     union {
         ASN1_IA5STRING *url;
@@ -211,8 +209,6 @@ public:
     STACK_OF(X509)* certs;
     SigningCryptoParams();
 };
-
-
 
 
 class CabFileSigner

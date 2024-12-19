@@ -1,14 +1,29 @@
 #pragma once
 
+//#include <openssl/asn1t.h>
+#include <openssl/bio.h>
+//#include <openssl/err.h>
+//#include <openssl/evp.h>
+//#include <openssl/objects.h>
+#include <openssl/pkcs7.h>
+//#include <openssl/pkcs12.h>
+#include <openssl/safestack.h>
+#include <openssl/x509.h>
+//#include <openssl/x509v3.h> /* X509_PURPOSE */
+
 //uint32_t get_original_cab_file_size(const char* infile);
 //char* map_file(const char* infile, const size_t size);
 //void unmap_file(char* indata);
+
+struct SpcLink_st; // I can declare SpcLink_st here so that this header file doesn't depend on osslsigncode.h
+struct SigningCryptoParams;
+class CabFileSigner;
 
 char* read_binary_into_buffer(char const* file_path, size_t* _size);
 
 int read_pkcs12(SigningCryptoParams& options, char const* pkcs12_file_path, char const* password, int password_length);
 
-SpcLink* spc_link_obsolete_get(void);
+SpcLink_st* spc_link_obsolete_get(void);
 
 PKCS7* pkcs7_create(SigningCryptoParams& options, EVP_MD const* md);
 

@@ -1,8 +1,21 @@
 #include<string>
 #include<iostream>
 #include<fstream>
+
 #include "osslsigncode.h"
 #include "helpers.h"
+
+#include <openssl/asn1t.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/objects.h>
+#include <openssl/pkcs7.h>
+#include <openssl/pkcs12.h>
+#include <openssl/safestack.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h> /* X509_PURPOSE */
+
 
 /*
  * $ echo -n 300c060a2b060104018237020115 | xxd -r -p | openssl asn1parse -i -inform der
@@ -131,6 +144,8 @@ int enter(
         || !OBJ_create(SPC_SP_OPUS_INFO_OBJID, NULL, NULL))
         return 1;
 
+    //ret = OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL);
+    
 
     /* read key and certificates */
     if (!read_pkcs12(cryptoParams, pkcs12_file_path, password, password_length))
@@ -151,6 +166,11 @@ int enter(
 
 int main(int argc, char** argv)
 {
+    uint16_t n = 20;
+    unsigned char* p = (unsigned char*) & n;
+
+
+
     int ret = enter(argv[1], argv[2], argv[3], NULL, 0);
 
     return ret == 1? 0 : ret;
