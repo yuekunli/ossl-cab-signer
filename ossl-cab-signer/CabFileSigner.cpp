@@ -3,7 +3,25 @@
 
 #include "CabFileSigner.h"
 
+#include<stdexcept>
+
+#include<openssl/core_names.h>
+
 typedef unsigned char u_char;
+
+
+CabFileSigner::CabFileSigner()
+    :original_cab_file_size(0),
+    hash(nullptr),
+    outdata(nullptr),
+    md(nullptr),
+    indata(nullptr),
+    p7(nullptr),
+    errorCode(ErrorCode::OK),
+    output_file_path(nullptr)
+{
+}
+
 
 /*
  * Allocate and return a CAB file format context.
@@ -14,46 +32,81 @@ typedef unsigned char u_char;
  */
 CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
     :original_cab_file_size(0),
-    hash(NULL),
-    outdata(NULL),
-    md(NULL),
-    indata(NULL),
-    p7(NULL)
+    hash(nullptr),
+    outdata(nullptr),
+    md(nullptr),
+    indata(nullptr),
+    p7(nullptr),
+    errorCode(ErrorCode::OK),
+    output_file_path(nullptr)
+{
+    int ret = init(infile, outfile);
+    if (ret != 1)
+    {
+        throw std::runtime_error("Fail to initialize");
+    }
+}
+int CabFileSigner::init(char const* infile, char const* outfile)
 {
     indata = read_binary_into_buffer(infile, &original_cab_file_size);
 
-    if (memcmp(indata, CAB_DISTINCT_BYTES, 4)) {
-        //unmap_file(indata);
-        OPENSSL_free(indata);
-        return; /* FAILED */
+    if (memcmp(indata, CAB_DISTINCT_BYTES, sizeof(CAB_DISTINCT_BYTES))) {
+        errorCode = ErrorCode::CAB_FILE_DISTINCT_BYTES_MISMATCH;
+        return 0;
     }
-    md = EVP_sha256();
+    md = EVP_MD_fetch(nullptr, OSSL_DIGEST_NAME_SHA2_256, nullptr);
 
     hash = BIO_new(BIO_f_md());
     if (!BIO_set_md(hash, md)) {
-        return;
+        EVP_MD_free(md);
+        md = nullptr;
+        errorCode = ErrorCode::HASH_BIO_SETUP_FAIL;
+        return 0;
     }
     /* Create outdata file */
     outdata = BIO_new_file(outfile, "w+bx");
     if (!outdata && errno != EEXIST)
         outdata = BIO_new_file(outfile, "w+b");
     if (!outdata) {
-        BIO_free_all(hash);
+        errorCode = ErrorCode::CREATE_OUTPUT_FILE_FAIL;
+        return 0;
     }
     
     /* Push hash on outdata, if hash is NULL the function does nothing */
     BIO_push(hash, outdata);
+    output_file_path = OPENSSL_strdup(outfile);
 
-    return;
+    return 1;
 }
 
 CabFileSigner::~CabFileSigner()
 {
-    BIO_free_all(hash);
-    //unmap_file(indata);
-    OPENSSL_free(indata);
-    //EVP_MD_free(md);
-    PKCS7_free(p7);
+    if (hash != nullptr)
+        BIO_free_all(hash);
+
+    if (indata != nullptr)
+        OPENSSL_free(indata);
+
+    if (p7 != nullptr)
+        PKCS7_free(p7);
+
+    if (errorCode != ErrorCode::OK && output_file_path != nullptr)
+        remove(output_file_path);
+
+    if (output_file_path != nullptr)
+        OPENSSL_free(output_file_path);
+}
+
+char const* CabFileSigner::getError()
+{
+    switch (errorCode)
+    {
+    case ErrorCode::CAB_FILE_DISTINCT_BYTES_MISMATCH:
+        return "Cab file first 4 bytes not MSCF";
+        // fill out the rest of error codes
+    default:
+        return "unknown error";
+    }
 }
 
 /*
@@ -104,22 +157,25 @@ int CabFileSigner::pkcs7_signature_new(SigningCryptoParams& options)
 
     if (!p7) {
         fprintf(stderr, "Creating a new signature failed\n");
+        errorCode = ErrorCode::PKCS7_NEW_SIGNATURE_FAIL;
         return 0; /* FAILED */
     }
 
     if (!pkcs7_signer_info_add_signed_attribute_content_type(p7)) {
         fprintf(stderr, "Adding SPC_INDIRECT_DATA_OBJID failed\n");
+        errorCode = ErrorCode::ADD_SIGNED_ATTRIBUTE_CONTENT_TYPE_FAIL;
         PKCS7_free(p7);
         return 0; /* FAILED */
     }
     content = spc_indirect_data_content_create(hash, *this);
     if (!content) {
         fprintf(stderr, "Failed to get spcIndirectDataContent\n");
+        errorCode = ErrorCode::SPC_INDIRECT_DATA_CONTENT_FAIL;
         return 0; /* FAILED */
     }
     if (!sign_spc_indirect_data_content(p7, content)) {
         fprintf(stderr, "Failed to set signed content\n");
-        PKCS7_free(p7);
+        errorCode = ErrorCode::SIGN_INDIRECT_DATA_CONTENT_FAIL;
         ASN1_OCTET_STRING_free(content);
         return 0; /* FAILED */
     }
@@ -201,6 +257,11 @@ int CabFileSigner::process_header()
     //memcpy(buf + 4, indata + 20, 10);
     BIO_write(hash, indata + OFFSET_RESERVED3, RESERVED3_SIZE + VERSION_MINOR_SIZE + VERSION_MAJOR_SIZE + CFOLDERS_SIZE + CFILES_SIZE);
     flags = GET_UINT16_LE(indata + OFFSET_FLAGS);
+    if (flags != 0)
+    {
+        errorCode = ErrorCode::FLAG_NOT_ZERO;
+        return 0;
+    }
     //buf[4+10] = (char)flags | FLAG_RESERVE_PRESENT;
     flags = flags | FLAG_RESERVE_PRESENT;
     PUT_UINT16_LE(flags, flags_buf);
@@ -214,12 +275,17 @@ int CabFileSigner::process_header()
     memcpy(cfHeader_optional_fields + CBCFHEADER_SIZE + CBCFFOLDER_SIZE + CBCFDATA_SIZE + ABRESERVE_DISTINCT_BYTES_SIZE, 
         cbCabinet_buf, CBCABINET_SIZE);
     BIO_write(outdata, cfHeader_optional_fields, 20);
+    /*
+    * Who would have known, out of the entire 24 bytes added header,
+    * the last 4 bytes of the abReserve are needed in the hash.
+    * This is never ever documented anywhere!
+    */
     BIO_write(hash, cfHeader_optional_fields +20, 4);
 
     idx = OFFSET_CFFOLDER_NO_RESERVE;
     if (idx >= original_cab_file_size) {
         fprintf(stderr, "Corrupt CAB file - too short\n");
-        //OPENSSL_free(buf);
+        errorCode = ErrorCode::CORRUPT_CAB_FILE_CFFOLDER_START_OVERFLOW;
         return 0; /* FAILED */
     }
     /*
@@ -229,7 +295,7 @@ int CabFileSigner::process_header()
     nfolders = GET_UINT16_LE(indata + OFFSET_CFOLDERS);
     if (nfolders * CFFOLDER_SIZE_FOR_ONE >= original_cab_file_size - idx) {
         fprintf(stderr, "Corrupt cFolders value: 0x%08X\n", nfolders);
-        //OPENSSL_free(buf);
+        errorCode = ErrorCode::CORRUPT_CAB_FILE_TOTAL_CFFOLDER_OVERFLOW;
         return 0; /* FAILED */
     }
     while (nfolders) {
@@ -246,7 +312,10 @@ int CabFileSigner::process_header()
     len = original_cab_file_size - idx;
     while (len > 0) {
         if (!BIO_write_ex(hash, indata + idx, len, &written))
+        {
+            errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
             return 0; /* FAILED */
+        }
         len -= written;
         idx += written;
     }
@@ -266,8 +335,14 @@ int CabFileSigner::append_pkcs7()
     int len;       /* signature length */
     int padlen;    /* signature padding length */
 
-    if (((len = i2d_PKCS7(p7, NULL)) <= 0)
-        || (p = (u_char*)OPENSSL_malloc((size_t)len)) == NULL) {
+    if ((len = i2d_PKCS7(p7, NULL)) <= 0)
+    {
+        errorCode = ErrorCode::PKCS7_DER_ENCODING_FAIL;
+        return 0;
+    }
+    if ((p = (u_char*)OPENSSL_malloc((size_t)len)) == NULL) 
+    {
+        errorCode = ErrorCode::MEM_ALLOC_ENCODED_PKCS7_FAIL;
         fprintf(stderr, "i2d_PKCS memory allocation failed: %d\n", len);
         return 0; /* FAILED */
     }

@@ -208,30 +208,8 @@ public:
     X509* cert;
     STACK_OF(X509)* certs;
     SigningCryptoParams();
+    ~SigningCryptoParams();
 };
 
 
-class CabFileSigner
-{
-private:
-    typedef unsigned char u_char;
 
-    size_t original_cab_file_size;
-    BIO* hash;
-    BIO* outdata;
-    EVP_MD const * md;
-    char* indata;
-    PKCS7* p7;
-    
-public:
-    CabFileSigner(char const* infile, char const* outfile);
-    ~CabFileSigner();
-    int sign(SigningCryptoParams& params);
-    int get_hash_size();
-    EVP_MD const* get_md() const;
-    int process_header();
-    int pkcs7_signature_new(SigningCryptoParams& options);
-    int append_pkcs7();
-    void update_data_size();
-    ASN1_OBJECT* spc_indirect_data_attributetypeandoptionalvalue_get(u_char** p, int* len);
-};

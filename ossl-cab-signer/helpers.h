@@ -21,7 +21,9 @@ class CabFileSigner;
 
 char* read_binary_into_buffer(char const* file_path, size_t* _size);
 
+// "read_pkcs12" has two overloads, (1) pkcs12 encoded certificate is in a file, (2) pkcs12 encoded certificate is in a buffer
 int read_pkcs12(SigningCryptoParams& options, char const* pkcs12_file_path, char const* password, int password_length);
+int read_pkcs12(SigningCryptoParams& params, char const* pkcs12_content_buf, int nPkcs12Length, char const* password, int pass_length);
 
 SpcLink_st* spc_link_obsolete_get(void);
 

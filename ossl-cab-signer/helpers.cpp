@@ -1,5 +1,6 @@
 #include "osslsigncode.h"
 #include "helpers.h"
+#include "CabFileSigner.h"
 //#include<string>
 //#include<iostream>
 #include<fstream>
@@ -111,7 +112,7 @@ int read_pkcs12(SigningCryptoParams& options, char const* pkcs12_file_path, char
     BIO* btmp;
     PKCS12* p12;
     char* pkcs12_buffer = NULL;
-    bool test_buffer = true;
+    bool test_buffer = false;
 
     if (test_buffer)
     {
@@ -146,6 +147,34 @@ out:
     if (pkcs12_buffer != NULL)
         OPENSSL_free(pkcs12_buffer);
     return ret;
+}
+
+int read_pkcs12(SigningCryptoParams& params, char const* pkcs12_content_buf, int nPkcs12Length, char const* password, int pass_length)
+{
+    BIO* btmp;
+    PKCS12* p12;
+
+    btmp = BIO_new_mem_buf(pkcs12_content_buf, nPkcs12Length);
+    if (!btmp)
+        return 0;
+
+    p12 = d2i_PKCS12_bio(btmp, nullptr);
+    if (!p12)
+    {
+        BIO_free(btmp);
+        return 0;
+    }
+
+    if (!PKCS12_parse(p12, pass_length > 0 ? password : "", &params.pkey, &params.cert, &params.certs))
+    {
+        PKCS12_free(p12);
+        BIO_free(btmp);
+        return 0;
+    }
+
+    PKCS12_free(p12);
+    BIO_free(btmp);
+    return 1;
 }
 
 /*
@@ -235,17 +264,16 @@ static int pkcs7_signer_info_add_signed_attribute_opus(PKCS7_SIGNER_INFO* si)
  */
 int pkcs7_signer_info_add_signed_attribute_content_type(PKCS7* p7)
 {
-    STACK_OF(PKCS7_SIGNER_INFO)* signer_info;
+    STACK_OF(PKCS7_SIGNER_INFO)* signer_infos;
     PKCS7_SIGNER_INFO* si;
 
-    signer_info = PKCS7_get_signer_info(p7);
-    if (!signer_info)
+    signer_infos = PKCS7_get_signer_info(p7);
+    if (!signer_infos)
         return 0; /* FAILED */
-    si = sk_PKCS7_SIGNER_INFO_value(signer_info, 0);
+    si = sk_PKCS7_SIGNER_INFO_value(signer_infos, 0);  // "sk" means stack, "0" means getting first element from the stack
     if (!si)
         return 0; /* FAILED */
-    if (!PKCS7_add_signed_attribute(si, NID_pkcs9_contentType,
-        V_ASN1_OBJECT, OBJ_txt2obj(SPC_INDIRECT_DATA_OBJID, 1)))
+    if (!PKCS7_add_signed_attribute(si, NID_pkcs9_contentType, V_ASN1_OBJECT, OBJ_txt2obj(SPC_INDIRECT_DATA_OBJID, 1)))
         return 0; /* FAILED */
     return 1; /* OK */
 }
@@ -269,10 +297,9 @@ static int pkcs7_signer_info_add_signed_attribute_purpose(PKCS7_SIGNER_INFO* si)
     ASN1_STRING* purpose = ASN1_STRING_new();
 
 
-    ASN1_STRING_set(purpose, purpose_ind, sizeof purpose_ind);
+    ASN1_STRING_set(purpose, purpose_ind, sizeof (purpose_ind));
 
-    return PKCS7_add_signed_attribute(si, OBJ_txt2nid(SPC_STATEMENT_TYPE_OBJID),
-        V_ASN1_SEQUENCE, purpose);
+    return PKCS7_add_signed_attribute(si, OBJ_txt2nid(SPC_STATEMENT_TYPE_OBJID), V_ASN1_SEQUENCE, purpose);
 }
 
 
@@ -478,34 +505,49 @@ int pkcs7_sign_content(PKCS7 *p7, const u_char *data, int len)
  * [in] content: spcIndirectDataContent
  * [returns] 0 on error or 1 on success
  */
+/*
+* signing a piece of data.
+* The type or value of the data is opaque to this function.
+* The data is DER encoded.
+* The DER octet array is wrapped in a ASN1_OCTET_STRING struct.
+* This wrapping doesn't mean putting more bytes around the original octet array.
+* It only means the original octet array is carried in this struct.
+* The struct has a pointer pointing at the start of the original octet array and a
+* member noting the length of the octet array.
+*/
 int sign_spc_indirect_data_content(PKCS7* p7, ASN1_OCTET_STRING* content)
 {
-    int len, inf, tag, tagClass;
-    long plen;
-    const u_char* data, * p;
-    PKCS7* td7;
+    int der_length, inf, tag, tagClass;
+    long data_length_inside_der;
+    const u_char* start_of_der, * start_of_data_inside_der;
+    PKCS7* content_info_of_signed_data;
 
-    p = data = ASN1_STRING_get0_data(content);
-    len = ASN1_STRING_length(content);
-    inf = ASN1_get_object(&p, &plen, &tag, &tagClass, len);
+    start_of_data_inside_der = start_of_der = ASN1_STRING_get0_data(content);
+    der_length = ASN1_STRING_length(content);
+    // these two steps are very simple operations, just get the member value of the struct
+
+    inf = ASN1_get_object(&start_of_data_inside_der, &data_length_inside_der, &tag, &tagClass, der_length);
+    // this is a complex operation, parse the octet string (product of DER encoding)
+
+    // !!! we don't sign the header part of the octet array (after DER encoding) of the Spc_Indirect_data
     if (inf != V_ASN1_CONSTRUCTED || tag != V_ASN1_SEQUENCE
-        || !pkcs7_sign_content(p7, p, (int)plen)) {
+        || !pkcs7_sign_content(p7, start_of_data_inside_der, (int)data_length_inside_der)) {
         fprintf(stderr, "Failed to sign spcIndirectDataContent\n");
         return 0; /* FAILED */
     }
-    td7 = PKCS7_new();
-    if (!td7) {
+    content_info_of_signed_data = PKCS7_new();
+    if (!content_info_of_signed_data) {
         fprintf(stderr, "PKCS7_new failed\n");
         return 0; /* FAILED */
     }
-    td7->type = OBJ_txt2obj(SPC_INDIRECT_DATA_OBJID, 1);
-    td7->d.other = ASN1_TYPE_new();
-    td7->d.other->type = V_ASN1_SEQUENCE;
-    td7->d.other->value.sequence = ASN1_STRING_new();
-    ASN1_STRING_set(td7->d.other->value.sequence, data, len);
-    if (!PKCS7_set_content(p7, td7)) {
+    content_info_of_signed_data->type = OBJ_txt2obj(SPC_INDIRECT_DATA_OBJID, 1);
+    content_info_of_signed_data->d.other = ASN1_TYPE_new();
+    content_info_of_signed_data->d.other->type = V_ASN1_SEQUENCE;
+    content_info_of_signed_data->d.other->value.sequence = ASN1_STRING_new();
+    ASN1_STRING_set(content_info_of_signed_data->d.other->value.sequence, start_of_der, der_length);
+    if (!PKCS7_set_content(p7, content_info_of_signed_data)) {
         fprintf(stderr, "PKCS7_set_content failed\n");
-        PKCS7_free(td7);
+        PKCS7_free(content_info_of_signed_data);
         return 0; /* FAILED */
     }
     return 1; /* OK */
@@ -534,7 +576,9 @@ static STACK_OF(X509) *X509_chain_get_sorted(SigningCryptoParams&options, int si
     int i;
     STACK_OF(X509) *chain = sk_X509_new(X509_compare);
 
-    /* add the signer's certificate */
+    /* add the signer's certificate, it's either the only cert (saved in options.cert)
+    * or is one on the stack of options.certs
+    */
     if (options.cert != NULL && !sk_X509_push(chain, options.cert)) {
         sk_X509_free(chain);
         return NULL;
@@ -544,6 +588,7 @@ static STACK_OF(X509) *X509_chain_get_sorted(SigningCryptoParams&options, int si
         return NULL;
     }
     /* add the certificate chain */
+    // it's OK if options.certs is NULL, sk_X509_num(NULL) returns -1
     for (i=0; i<sk_X509_num(options.certs); i++) {
         if (i == signer)
             continue;

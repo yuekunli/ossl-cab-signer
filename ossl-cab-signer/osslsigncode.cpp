@@ -4,6 +4,7 @@
 
 #include "osslsigncode.h"
 #include "helpers.h"
+#include "CabFileSigner.h"
 
 #include <openssl/asn1t.h>
 #include <openssl/bio.h>
@@ -99,6 +100,11 @@ ASN1_SEQUENCE(SpcIndirectDataContent) = {
 IMPLEMENT_ASN1_FUNCTIONS(SpcIndirectDataContent)
 
 
+// An example of these macros (IMPLEMENT_ASN1_FUNCTIONS, ANS1_SEQUENCE, etc)
+// and that corresponding one in osslsigncode.h (DECLARE_ASN1_FUNCTIONS) is here:
+// https://docs.openssl.org/3.0/man3/ASN1_item_sign/#return-values
+
+
 /*
  * [in, out] options: structure holds the input data
  * [returns] none
@@ -123,6 +129,26 @@ SigningCryptoParams::SigningCryptoParams()
     certs(NULL)
 {}
 
+SigningCryptoParams::~SigningCryptoParams()
+{
+    if (pkey != nullptr)
+    {
+        EVP_PKEY_free(pkey);
+        pkey = nullptr;
+    }
+
+    if (cert != nullptr)
+    {
+        X509_free(cert);
+        cert = nullptr;
+    }
+
+    if (certs != nullptr)
+    {
+        sk_X509_pop_free(certs, X509_free);
+        certs = nullptr;
+    }
+}
 
 
 int enter(
@@ -138,40 +164,134 @@ int enter(
 
     OSSL_LIB_CTX_load_config(NULL, "C:\\ws\\openssl-3.2.1_output\\static_64_debug\\openssl_default.cnf");
 
-    /* create some MS Authenticode OIDS we need later on */
-
-    if (!OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL)
-        || !OBJ_create(SPC_SP_OPUS_INFO_OBJID, NULL, NULL))
-        return 1;
-
-    //ret = OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL);
+    /* create some MS Authenticode OIDS we need later on,
+    * but need to look them up first, in case this program is used as a library,
+    * and this code is invoked repeatedly, those OIDs would have been created after first invocation
+    */
     
+    ASN1_OBJECT* tmp_oid = OBJ_txt2obj(SPC_STATEMENT_TYPE_OBJID, 1);
+    if (OBJ_obj2nid(tmp_oid) == NID_undef)
+    {
+        ret = OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL);
+        if (ret == 0)
+        {
+            return 0;
+        }
+    }
+
+    tmp_oid = OBJ_txt2obj(SPC_SP_OPUS_INFO_OBJID, 1);
+    if (OBJ_obj2nid(tmp_oid) == NID_undef)
+    {
+        ret = OBJ_create(SPC_SP_OPUS_INFO_OBJID, NULL, NULL);
+        if (ret == 0)
+        {
+            return 0;
+        }
+    }
 
     /* read key and certificates */
     if (!read_pkcs12(cryptoParams, pkcs12_file_path, password, password_length))
         return 1;
 
-
-    CabFileSigner cab{ input_cab_file_path, output_file_path };
+    CabFileSigner cab{ };
+    ret = cab.init(input_cab_file_path, output_file_path);
+    if (ret != 1)
+    {
+        return ret;
+    }
    
     ret = cab.sign(cryptoParams);
-    
-    //PKCS7_free(p7);
 
     printf(ret ? "Succeeded\n" : "Failed\n");
 
-    return ret==1;
+    return ret;
+}
+
+// this is almost same as "enter", this function takes pkcs12 encoded cert in a buffer
+int enter2(
+    char const* input_cab_file_path,
+    char const* output_file_path,
+    char const* pkcs12_content_buf,
+    int pkcs12_buf_len,
+    char const* password,
+    int password_length)
+{
+    SigningCryptoParams cryptoParams;
+    PKCS7* p7 = NULL;
+    int ret = -1;
+
+    OSSL_LIB_CTX_load_config(NULL, "C:\\ws\\openssl-3.2.1_output\\static_64_debug\\openssl_default.cnf");
+
+    /* create some MS Authenticode OIDS we need later on,
+    * but need to look them up first, in case this program is used as a library,
+    * and this code is invoked repeatedly, those OIDs would have been created after first invocation
+    */
+
+    ASN1_OBJECT* tmp_oid = OBJ_txt2obj(SPC_STATEMENT_TYPE_OBJID, 1);
+    if (OBJ_obj2nid(tmp_oid) == NID_undef)
+    {
+        ret = OBJ_create(SPC_STATEMENT_TYPE_OBJID, NULL, NULL);
+        if (ret == 0)
+        {
+            return 0;
+        }
+    }
+
+    tmp_oid = OBJ_txt2obj(SPC_SP_OPUS_INFO_OBJID, 1);
+    if (OBJ_obj2nid(tmp_oid) == NID_undef)
+    {
+        ret = OBJ_create(SPC_SP_OPUS_INFO_OBJID, NULL, NULL);
+        if (ret == 0)
+        {
+            return 0;
+        }
+    }
+
+    /* read key and certificates */
+    if (!read_pkcs12(cryptoParams, pkcs12_content_buf, pkcs12_buf_len, password, password_length))
+        return 1;
+
+    CabFileSigner cab{ };
+    ret = cab.init(input_cab_file_path, output_file_path);
+    if (ret != 1)
+    {
+        return ret;
+    }
+
+    ret = cab.sign(cryptoParams);
+
+    printf(ret ? "Succeeded\n" : "Failed\n");
+
+    return ret;
 }
 
 
+// Every function (except main) in this project uses '1' to indicate success, '0' to indicate failure.
 int main(int argc, char** argv)
 {
-    uint16_t n = 20;
-    unsigned char* p = (unsigned char*) & n;
-
-
-
-    int ret = enter(argv[1], argv[2], argv[3], NULL, 0);
+    int ret = enter(argv[1]/*input file path*/, argv[2]/*output file path*/, argv[3]/*pkcs12 file path*/, NULL/*password*/, 0/*password length*/);
 
     return ret == 1? 0 : ret;
+}
+
+
+extern "C" {
+    __declspec(dllexport) int signCabFile(char const* input_cab_file_path,
+        char const* output_file_path,
+        char const* pkcs12_file_path,
+        char const* password,
+        int password_length)
+    {
+       return enter(input_cab_file_path, output_file_path, pkcs12_file_path, password, password_length);
+    }
+
+    __declspec(dllexport) int signCabFile2(char const* input_cab_file_path,
+        char const* output_file_path,
+        char const* pkcs12_content_buf,
+        int pkcs12_buf_len,
+        char const* password,
+        int password_length)
+    {
+        return enter2(input_cab_file_path, output_file_path, pkcs12_content_buf, pkcs12_buf_len, password, password_length);
+    }
 }

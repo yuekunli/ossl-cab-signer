@@ -71,3 +71,52 @@ const int CFFOLDER_SIZE_FOR_ONE = 8;
 
 const int COFFCABSTART_SIZE = 4;
 
+
+
+class CabFileSigner
+{
+private:
+    typedef unsigned char u_char;
+
+    enum ErrorCode
+    {
+        OK = 0,
+        CAB_FILE_DISTINCT_BYTES_MISMATCH,
+        HASH_BIO_SETUP_FAIL,
+        CREATE_OUTPUT_FILE_FAIL,
+        PKCS7_NEW_SIGNATURE_FAIL,
+        ADD_SIGNED_ATTRIBUTE_CONTENT_TYPE_FAIL,
+        SPC_INDIRECT_DATA_CONTENT_FAIL,
+        SIGN_INDIRECT_DATA_CONTENT_FAIL,
+        FLAG_NOT_ZERO,
+        CORRUPT_CAB_FILE_CFFOLDER_START_OVERFLOW,
+        CORRUPT_CAB_FILE_TOTAL_CFFOLDER_OVERFLOW,
+        WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL,
+        PKCS7_DER_ENCODING_FAIL,
+        MEM_ALLOC_ENCODED_PKCS7_FAIL,
+    };
+
+    size_t original_cab_file_size;
+    BIO* hash;
+    BIO* outdata;
+    EVP_MD* md;
+    char* indata;
+    PKCS7* p7;
+    ErrorCode errorCode;
+    char* output_file_path;
+
+public:
+    CabFileSigner();
+    CabFileSigner(char const* infile, char const* outfile);
+    ~CabFileSigner();
+    int init(char const* infile, char const* outfile);
+    int sign(SigningCryptoParams& params);
+    int get_hash_size();
+    EVP_MD const* get_md() const;
+    int process_header();
+    int pkcs7_signature_new(SigningCryptoParams& options);
+    int append_pkcs7();
+    void update_data_size();
+    ASN1_OBJECT* spc_indirect_data_attributetypeandoptionalvalue_get(u_char** p, int* len);
+    char const* getError();
+};
