@@ -481,7 +481,11 @@ int pkcs7_sign_content(PKCS7 *p7, const u_char *data, int len)
         fprintf(stderr, "PKCS7_dataInit failed\n");
         return 0; /* FAILED */
     }
-    BIO_write(p7bio, data, len);
+    if (BIO_write(p7bio, data, len) != len)
+    {
+        BIO_free_all(p7bio);
+        return 0;
+    }
     (void)BIO_flush(p7bio);
     if (!PKCS7_dataFinal(p7, p7bio)) {
         fprintf(stderr, "PKCS7_dataFinal failed\n");
@@ -614,21 +618,21 @@ static STACK_OF(X509) *X509_chain_get_sorted(SigningCryptoParams&options, int si
  */
 static int X509_compare(const X509 *const *a, const X509 *const *b)
 {
-    u_char *a_data, *b_data;
+    u_char *a_data, *a_data_head, *b_data, *b_data_head;
     size_t a_len, b_len;
     int ret;
 
     a_len = (size_t)i2d_X509(*a, NULL);
-    a_data = (u_char*)OPENSSL_malloc(a_len);
+    a_data = a_data_head = (u_char*)OPENSSL_malloc(a_len);
     i2d_X509(*a, &a_data);
 
     b_len = (size_t)i2d_X509(*b, NULL);
-    b_data = (u_char*)OPENSSL_malloc(b_len);
+    b_data = b_data_head = (u_char*)OPENSSL_malloc(b_len);
     i2d_X509(*b, &b_data);
 
-    ret = memcmp(a_data, b_data, std::min(a_len, b_len));
-    OPENSSL_free(a_data);
-    OPENSSL_free(b_data);
+    ret = memcmp(a_data_head, b_data_head, std::min(a_len, b_len));
+    OPENSSL_free(a_data_head);
+    OPENSSL_free(b_data_head);
 
     if (ret == 0 && a_len != b_len) /* identical up to the length of the shorter DER */
         ret = a_len < b_len ? -1 : 1; /* shorter is smaller */

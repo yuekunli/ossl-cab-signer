@@ -78,7 +78,7 @@ class CabFileSigner
 private:
     typedef unsigned char u_char;
 
-    enum ErrorCode
+    enum class ErrorCode
     {
         OK = 0,
         CAB_FILE_DISTINCT_BYTES_MISMATCH,

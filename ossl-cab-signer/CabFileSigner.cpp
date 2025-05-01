@@ -389,6 +389,12 @@ int CabFileSigner::sign(SigningCryptoParams& params)
     if (!process_header()) {
         return 0;
     }
+
+    if (BIO_flush(hash) <= 0) // ensure all data is processed before using the hash value
+    {
+        return 0;
+    }
+
     ret = pkcs7_signature_new(params);
     if (!ret) {
         return 0;
@@ -401,6 +407,8 @@ int CabFileSigner::sign(SigningCryptoParams& params)
     }
 
     update_data_size();
+
+    BIO_flush(outdata);
 
     return 1;
 }
