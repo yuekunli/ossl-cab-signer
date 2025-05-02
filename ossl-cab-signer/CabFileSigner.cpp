@@ -4,14 +4,56 @@
 #include "CabFileSigner.h"
 
 #include<stdexcept>
+#include<algorithm>
 
 #include<openssl/core_names.h>
 
 typedef unsigned char u_char;
 
+namespace {
+    size_t file_size(BIO* bio)
+    {
+        FILE* fp = nullptr;
+        long original_pos = -1L;
+        long size_temp = -1L;
+        long long file_size = -1L;
+
+        //verify this is a file first
+        if (BIO_method_type(bio) != BIO_TYPE_FILE)
+            return 0;
+
+        if (BIO_get_fp(bio, &fp) <= 0 || fp == nullptr)
+            return 0;
+
+        // save original position
+        original_pos = ftell(fp);
+        if (original_pos == -1LL)
+            return 0;
+
+        // seek to end
+        if (fseek(fp, 0, SEEK_END) != 0)
+        {
+            fseek(fp, original_pos, SEEK_SET);
+            return 0;
+        }
+
+        //get size
+        size_temp = ftell(fp);
+        if (size_temp == -1L)
+        {
+            fseek(fp, original_pos, SEEK_SET);
+            return 0;
+        }
+
+        fseek(fp, original_pos, SEEK_SET);
+        return static_cast<size_t>(size_temp);
+    }
+}
+
 
 CabFileSigner::CabFileSigner()
-    :original_cab_file_size(0),
+    :indata_bio(nullptr),
+    original_cab_file_size(0),
     hash(nullptr),
     outdata(nullptr),
     md(nullptr),
@@ -31,7 +73,8 @@ CabFileSigner::CabFileSigner()
  * [returns] pointer to CAB file format context
  */
 CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
-    :original_cab_file_size(0),
+    :indata_bio(nullptr),
+    original_cab_file_size(0),
     hash(nullptr),
     outdata(nullptr),
     md(nullptr),
@@ -46,20 +89,93 @@ CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
         throw std::runtime_error("Fail to initialize");
     }
 }
+
+
+bool CabFileSigner::read_exact(size_t offset, void* buf, size_t len)
+{
+    if (BIO_seek(indata_bio, offset, SEEK_SET) != 0)
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return false;
+    }
+
+    size_t bytes_read_total = 0;
+    if (!BIO_read_ex(indata_bio, buf, len, &bytes_read_total))
+    {
+        if (BIO_eof(indata_bio) <= 0)
+        {
+            errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+            return false;
+        }
+
+        if (bytes_read_total != len)
+        {
+            errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+            return false;
+        }
+    }
+
+    if (bytes_read_total != len)
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return false;
+    }
+    return true;
+}
+
+
 int CabFileSigner::init(char const* infile, char const* outfile)
 {
+    indata_bio = BIO_new_file(infile, "rb");
+    if (!indata_bio)
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return 0;
+    }
+
+    /*
     indata = read_binary_into_buffer(infile, &original_cab_file_size);
 
     if (memcmp(indata, CAB_DISTINCT_BYTES, sizeof(CAB_DISTINCT_BYTES))) {
         errorCode = ErrorCode::CAB_FILE_DISTINCT_BYTES_MISMATCH;
         return 0;
     }
+    */
+
+    if ((original_cab_file_size = file_size(indata_bio)) == 0)
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return 0;
+    }
+
+    unsigned char distinct_bytes[CAB_DISTINCT_BYTES_SIZE] = { 0 };
+    if (!read_exact(OFFSET_CAB_DISTINCT_BYTES, distinct_bytes, sizeof(distinct_bytes)))
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return 0;
+    }
+
+    if (memcmp(distinct_bytes, CAB_DISTINCT_BYTES, sizeof(CAB_DISTINCT_BYTES)))
+    {
+        errorCode = ErrorCode::CAB_FILE_DISTINCT_BYTES_MISMATCH;
+        return 0;
+    }
+
     md = EVP_MD_fetch(nullptr, OSSL_DIGEST_NAME_SHA2_256, nullptr);
 
     hash = BIO_new(BIO_f_md());
     if (!BIO_set_md(hash, md)) {
+
         EVP_MD_free(md);
         md = nullptr;
+        // I won't know if this set_md is successful when I'm in the destructor, 
+        // I must make sure when I'm in destructor, either (1) "hash" and "md" are both
+        // initialized and connected, so that BIO_free_all(hash) can free both
+        // or (2) only "hash" is initialized and "md" is already freed, so that BIO_free_all(hash)
+        // is still good and can free "hash". 
+        // I must not have "hash" and "md" both initialized but not connected when I'm in the destructor
+        
+        
         errorCode = ErrorCode::HASH_BIO_SETUP_FAIL;
         return 0;
     }
@@ -84,8 +200,8 @@ CabFileSigner::~CabFileSigner()
     if (hash != nullptr)
         BIO_free_all(hash);
 
-    if (indata != nullptr)
-        OPENSSL_free(indata);
+    if (indata_bio != nullptr)
+        BIO_free(indata_bio);
 
     if (p7 != nullptr)
         PKCS7_free(p7);
@@ -195,6 +311,7 @@ int CabFileSigner::process_header()
     size_t idx, written, len;
     uint32_t tmp;
     uint16_t nfolders, flags;
+    u_char read_buf[128];
     u_char cfHeader_optional_fields[] = {
         0x14, 0x00, // cbCFHeader
         0x00, // cbCFFolder
@@ -221,17 +338,22 @@ int CabFileSigner::process_header()
 
     uint32_t extra_size = CBCFHEADER_SIZE + CBCFFOLDER_SIZE + CBCFDATA_SIZE + ABRESERVE_SIZE;
     /* u1 signature[4] 4643534D MSCF: 0-3 */
-    BIO_write(hash, indata + OFFSET_CAB_DISTINCT_BYTES, CAB_DISTINCT_BYTES_SIZE);
+    if (!read_exact(OFFSET_CAB_DISTINCT_BYTES, read_buf, CAB_DISTINCT_BYTES_SIZE))
+        return 0;
+    BIO_write(hash, read_buf, CAB_DISTINCT_BYTES_SIZE);
     /* u4 reserved1 00000000: 4-7 */
-    BIO_write(outdata, indata + OFFSET_RESERVED1, RESERVED1_SIZE);
+    if (!read_exact(OFFSET_RESERVED1, read_buf, RESERVED1_SIZE))
+        return 0;
+    BIO_write(outdata, read_buf, RESERVED1_SIZE);
     /* u4 cbCabinet - size of this cabinet file in bytes: 8-11 */
+    if (!read_exact(OFFSET_CBCABINET, read_buf, CBCABINET_SIZE))
+        return 0;
 
-
-    char* p1 = indata + OFFSET_CBCABINET;
+    char* p1 = static_cast<char*>(static_cast<void*>(read_buf));
     printf("%xd  %xd  %xd  %xd", p1[0], p1[1], p1[2], p1[3]);
 
 
-    tmp = GET_UINT32_LE(indata + OFFSET_CBCABINET);
+    tmp = GET_UINT32_LE(read_buf);
 
     unsigned char* p = (unsigned char*)&tmp;
     printf("%xd  %xd  %xd  %xd", p[0], p[1], p[2], p[3]);
@@ -242,9 +364,13 @@ int CabFileSigner::process_header()
     PUT_UINT32_LE(tmp, cbCabinet_buf);
     BIO_write(hash, cbCabinet_buf, CBCABINET_SIZE);
     /* u4 reserved2 00000000: 12-15 */
-    BIO_write(hash, indata + OFFSET_RESERVED2, RESERVED2_SIZE);
+    if (!read_exact(OFFSET_RESERVED2, read_buf, RESERVED2_SIZE))
+        return 0;
+    BIO_write(hash, read_buf, RESERVED2_SIZE);
     /* u4 coffFiles - offset of the first CFFILE entry: 16-19 */
-    tmp = GET_UINT32_LE(indata + OFFSET_COFFFILES) + extra_size;
+    if (!read_exact(OFFSET_COFFFILES, read_buf, COFFFILES_SIZE))
+        return 0;
+    tmp = GET_UINT32_LE(read_buf) + extra_size;
     PUT_UINT32_LE(tmp, coffFiles_buf);
     BIO_write(hash, coffFiles_buf, COFFFILES_SIZE);
     /*
@@ -255,8 +381,15 @@ int CabFileSigner::process_header()
      * u2 cFiles - number of CFFILE entries in this cabinet: 28-29
      */
     //memcpy(buf + 4, indata + 20, 10);
-    BIO_write(hash, indata + OFFSET_RESERVED3, RESERVED3_SIZE + VERSION_MINOR_SIZE + VERSION_MAJOR_SIZE + CFOLDERS_SIZE + CFILES_SIZE);
-    flags = GET_UINT16_LE(indata + OFFSET_FLAGS);
+    constexpr size_t block1_size = RESERVED3_SIZE + VERSION_MINOR_SIZE + VERSION_MAJOR_SIZE + CFOLDERS_SIZE + CFILES_SIZE;
+    if (!read_exact(OFFSET_RESERVED3, read_buf, block1_size))
+        return 0;
+    BIO_write(hash, read_buf, block1_size);
+
+    /*u2 flags*/
+    if (!read_exact(OFFSET_FLAGS, read_buf, FLAGS_SIZE))
+        return 0;
+    flags = GET_UINT16_LE(read_buf);
     if (flags != 0)
     {
         errorCode = ErrorCode::FLAG_NOT_ZERO;
@@ -265,13 +398,18 @@ int CabFileSigner::process_header()
     //buf[4+10] = (char)flags | FLAG_RESERVE_PRESENT;
     flags = flags | FLAG_RESERVE_PRESENT;
     PUT_UINT16_LE(flags, flags_buf);
-    /* u2 setID must be the same for all cabinets in a set: 32-33 */
     //memcpy(buf + 16, indata + 32, 2);
     BIO_write(hash, flags_buf, FLAGS_SIZE);
+    
+    /* u2 setID must be the same for all cabinets in a set: 32-33 */
     //BIO_write(hash, buf + 4, 14);
-    BIO_write(hash, indata + OFFSET_SETID, SETID_SIZE);
+    if (!read_exact(OFFSET_SETID, read_buf, SETID_SIZE))
+        return 0;
+    BIO_write(hash, read_buf, SETID_SIZE);
     /* u2 iCabinet - number of this cabinet file in a set: 34-35 */
-    BIO_write(outdata, indata + OFFSET_ICABINET, ICABINET_SIZE);
+    if (!read_exact(OFFSET_ICABINET, read_buf, ICABINET_SIZE))
+        return 0;
+    BIO_write(outdata, read_buf, ICABINET_SIZE);
     memcpy(cfHeader_optional_fields + CBCFHEADER_SIZE + CBCFFOLDER_SIZE + CBCFDATA_SIZE + ABRESERVE_DISTINCT_BYTES_SIZE, 
         cbCabinet_buf, CBCABINET_SIZE);
     BIO_write(outdata, cfHeader_optional_fields, 20);
@@ -292,33 +430,83 @@ int CabFileSigner::process_header()
      * (u8 * cFolders) CFFOLDER - structure contains information about
      * one of the folders or partial folders stored in this cabinet file
      */
-    nfolders = GET_UINT16_LE(indata + OFFSET_CFOLDERS);
-    if (nfolders * CFFOLDER_SIZE_FOR_ONE >= original_cab_file_size - idx) {
+    if (!read_exact(OFFSET_CFOLDERS, read_buf, CFOLDERS_SIZE))
+        return 0;
+    nfolders = GET_UINT16_LE(read_buf);
+    if (static_cast<uint64_t>(nfolders) * CFFOLDER_SIZE_FOR_ONE >= original_cab_file_size - idx) {
         fprintf(stderr, "Corrupt cFolders value: 0x%08X\n", nfolders);
         errorCode = ErrorCode::CORRUPT_CAB_FILE_TOTAL_CFFOLDER_OVERFLOW;
         return 0; /* FAILED */
     }
     while (nfolders) {
-        tmp = GET_UINT32_LE(indata + idx);
+        if (!read_exact(idx, read_buf, COFFCABSTART_SIZE))
+            return 0;
+        tmp = GET_UINT32_LE(read_buf);
         tmp += extra_size;
         PUT_UINT32_LE(tmp, coffCabStart_buf);
         BIO_write(hash, coffCabStart_buf, COFFCABSTART_SIZE);
-        BIO_write(hash, indata + idx + COFFCABSTART_SIZE, 4);
+        if (!read_exact(idx + COFFCABSTART_SIZE, read_buf, 4))
+        BIO_write(hash, read_buf, 4);
         idx += CFFOLDER_SIZE_FOR_ONE;
         nfolders--;
     }
     //OPENSSL_free(buf);
     /* Write what's left - the compressed data bytes */
+    // process remaining data
     len = original_cab_file_size - idx;
+    if (BIO_seek(indata_bio, idx) < 0) // seek to offset after folders
+    {
+        errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
+        return 0;
+    }
+    
+    char chunk_buf[4096] = { 0 };
+
+    while (len > 0)
+    {
+        size_t to_read = std::min(len, sizeof(chunk_buf));
+        size_t chunk_bytes_read = 0;
+        if (!BIO_read_ex(indata_bio, chunk_buf, to_read, &chunk_bytes_read))
+        {
+            if (BIO_eof(indata_bio) <= 0)
+            {
+                errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
+                return 0;
+            }
+            if (chunk_bytes_read < to_read && len != chunk_bytes_read)
+            {
+                // reached EOF sonner than expected
+                errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
+                return 0;
+            }
+            if (chunk_bytes_read == 0)
+                break;
+        }
+        if (!BIO_write_ex(hash, chunk_buf, chunk_bytes_read & written) || written != chunk_bytes_read)
+        {
+            errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
+            return 0;
+        }
+        len -= chunk_bytes_read;
+    }
+    if (len != 0)
+    {
+        errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
+        return 0;
+    }
+
+
+    /*
     while (len > 0) {
         if (!BIO_write_ex(hash, indata + idx, len, &written))
         {
             errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
-            return 0; /* FAILED */
+            return 0;
         }
         len -= written;
         idx += written;
     }
+    */
     return 1; /* OK */
 }
 

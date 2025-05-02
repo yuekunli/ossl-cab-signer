@@ -94,16 +94,20 @@ private:
         WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL,
         PKCS7_DER_ENCODING_FAIL,
         MEM_ALLOC_ENCODED_PKCS7_FAIL,
+        INPUT_FILE_IO_ERROR,
     };
 
+    BIO* indata_bio;
     size_t original_cab_file_size;
     BIO* hash;
     BIO* outdata;
     EVP_MD* md;
-    char* indata;
+    //char* indata;
     PKCS7* p7;
     ErrorCode errorCode;
     char* output_file_path;
+
+    bool read_exact(size_t offset, void* buf, size_t len);
 
 public:
     CabFileSigner();
