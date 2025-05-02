@@ -57,7 +57,7 @@ CabFileSigner::CabFileSigner()
     hash(nullptr),
     outdata(nullptr),
     md(nullptr),
-    indata(nullptr),
+    //indata(nullptr),
     p7(nullptr),
     errorCode(ErrorCode::OK),
     output_file_path(nullptr)
@@ -78,7 +78,7 @@ CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
     hash(nullptr),
     outdata(nullptr),
     md(nullptr),
-    indata(nullptr),
+    //indata(nullptr),
     p7(nullptr),
     errorCode(ErrorCode::OK),
     output_file_path(nullptr)
@@ -93,7 +93,18 @@ CabFileSigner::CabFileSigner(char const* infile, char const* outfile)
 
 bool CabFileSigner::read_exact(size_t offset, void* buf, size_t len)
 {
-    if (BIO_seek(indata_bio, offset, SEEK_SET) != 0)
+    // BIO_seek is a macro and it expands to BIO_ctrl(indata_bio, 128, offset, 0)
+    // the 3rd argument is should be a "long" type integer, yet the "offset" here is size_t
+    // on 64-bit machine, size_t will be 64 bit long, and "long" integer type is maybe 32-bit?
+    // the upper limit of 32-bit signed integer is ~2GB.
+    // What if the underlying file is bigger than 2GB and I want to seek over 2GB?
+    // 32-bit system has file size limit of 2GB, so I can have a file bigger than 2GB anyway on
+    // 32-bit system, so this is fine on 32-bit system.
+    // but on 64-bit system, this depends on why "long" type is implemented with 32bit or 64 bit
+    // and whether "size_t" is implemented as 32bit or 64 bit?
+    // It looks like on 64-bit Windows, "long" is 32 bit and "size_t" is 64 bit.
+    // https://stackoverflow.com/questions/384502/what-is-the-bit-size-of-long-on-64-bit-windows
+    if (BIO_seek(indata_bio, offset) != 0)
     {
         errorCode = ErrorCode::INPUT_FILE_IO_ERROR;
         return false;
@@ -482,7 +493,7 @@ int CabFileSigner::process_header()
             if (chunk_bytes_read == 0)
                 break;
         }
-        if (!BIO_write_ex(hash, chunk_buf, chunk_bytes_read & written) || written != chunk_bytes_read)
+        if (!BIO_write_ex(hash, chunk_buf, chunk_bytes_read, &written) || written != chunk_bytes_read)
         {
             errorCode = ErrorCode::WRITE_CFFILE_AND_CFDATA_TO_BIO_FAIL;
             return 0;
